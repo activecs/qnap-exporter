@@ -1,4 +1,4 @@
-PKG = github.com/pedropombeiro/qnapexporter
+PKG = github.com/activecs/qnap-exporter
 VERSION_PKG = $(PKG)/lib/utils
 PACKAGE_VERSION ?= dev
 REVISION := $(shell git rev-parse --short=8 HEAD || echo unknown)
