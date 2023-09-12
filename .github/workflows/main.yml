@@ -1,35 +1,32 @@
----
 name: Build qnapexporter
 
 on:  # yamllint disable-line rule:truthy
   push:
     branches:
       - master
-
 jobs:
   build:
-    runs-on: ubuntu-latest
-
+    runs-on: self-hosted
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v3
+        with:
+          fail-on-severity: moderate
       - name: Run tests
         run: |
           make test
-
       - id: go
         name: Set up Go environment
         uses: actions/setup-go@v3
         with:
           go-version: 1.19
-
       - name: Build
         run: |
           make build
-
       - name: Upload build artifacts
         uses: actions/upload-artifact@v3
         with:
