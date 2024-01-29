@@ -13,7 +13,7 @@ jobs:
       contents: write  # for wangyoucao577/go-release-action to upload assets
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - uses: wangyoucao577/go-release-action@v1.35
