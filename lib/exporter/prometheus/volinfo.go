@@ -54,8 +54,7 @@ func (e *promExporter) readSysVolInfo() {
 		}
 		e.Logger.Printf("Retrieved volume %q vol_fs %q", description, fileSystem)
 		if fileSystem == "Unknown" {
-			e.Logger.Printf("Ignoring %q volume with %s file system", description, fileSystem)
-			continue
+			fileSystem = "unknown"
 		}
 
 		volsizeStr, err := utils.ExecCommand(e.getsysinfo, "vol_totalsize", volIdx)
@@ -107,6 +106,10 @@ func (e *promExporter) getSysInfoVolMetrics() ([]metric, error) {
 
 	for idx, v := range e.volumes {
 		e.status.Volumes = append(e.status.Volumes, v.description)
+
+		if v.fileSystem == "unknown" && len(e.zfs.datasets) > 0 {
+			continue
+		}
 
 		if expired || v.freeSizeBytes == 0 {
 			freesizeStr, err := utils.ExecCommand(e.getsysinfo, "vol_freesize", v.index)
