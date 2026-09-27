@@ -12,6 +12,8 @@ import (
 	nut "github.com/robbiet480/go.nut"
 )
 
+const upsRetryInterval = time.Hour
+
 type upsState struct {
 	upsLock   sync.Mutex
 	upsClient nut.Client
@@ -54,18 +56,20 @@ func (e *promExporter) getUpsStatsMetrics() (metrics []metric, err error) {
 	}()
 
 	if e.upsState.upsClient.ProtocolVersion == "" {
-		if e.upsState.upsConnAttempts >= 10 && time.Since(e.upsState.upsConnErrTimestamp) >= 1*time.Hour {
-			e.upsState.upsConnAttempts = 0
+		if e.upsState.upsConnErr != nil && time.Since(e.upsState.upsConnErrTimestamp) < upsRetryInterval {
+			return nil, nil
 		}
-		if e.upsState.upsConnAttempts < 10 {
-			e.Logger.Println("Connecting to UPS daemon")
+		e.Logger.Println("Connecting to UPS daemon")
 
-			e.upsState.upsConnAttempts++
-			e.upsState.upsClient, e.upsState.upsConnErr = nut.Connect("127.0.0.1")
-		}
+		e.upsState.upsConnAttempts++
+		e.upsState.upsClient, e.upsState.upsConnErr = nut.Connect("127.0.0.1")
 		if e.upsState.upsConnErr != nil {
 			e.upsState.upsConnErrTimestamp = time.Now()
-			return nil, fmt.Errorf("%w (attempt %d)", e.upsState.upsConnErr, e.upsState.upsConnAttempts)
+			if e.upsState.upsConnAttempts == 1 {
+				return nil, fmt.Errorf("%w (attempt %d, retrying hourly)", e.upsState.upsConnErr, e.upsState.upsConnAttempts)
+			}
+			e.Logger.Printf("UPS daemon still unavailable: %v (attempt %d)", e.upsState.upsConnErr, e.upsState.upsConnAttempts)
+			return nil, nil
 		}
 	}
 
