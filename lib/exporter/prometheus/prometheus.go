@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -353,15 +354,34 @@ func (e *promExporter) readNvmePath() {
 	}
 }
 
+// zfsToolDirs are checked when zpool/zfs are not on PATH: the QPKG service environment on
+// QuTS hero does not include /sbin, where both binaries live.
+var zfsToolDirs = []string{"/sbin", "/usr/sbin", "/usr/local/sbin", "/usr/local/bin", "/bin", "/usr/bin"}
+
+// lookPathOrDirs finds an executable on PATH or in a fixed list of directories.
+func lookPathOrDirs(name string, dirs []string) string {
+	if p, err := exec.LookPath(name); err == nil {
+		return p
+	}
+	for _, dir := range dirs {
+		candidate := filepath.Join(dir, name)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0o111 != 0 {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// readZfsPaths looks up zpool/zfs (QuTS hero); without them the ZFS collector is a no-op.
 func (e *promExporter) readZfsPaths() {
 	if e.zpoolPath == "" {
-		e.zpoolPath, _ = exec.LookPath("zpool")
+		e.zpoolPath = lookPathOrDirs("zpool", zfsToolDirs)
 	}
 	if e.zfsPath == "" {
-		e.zfsPath, _ = exec.LookPath("zfs")
+		e.zfsPath = lookPathOrDirs("zfs", zfsToolDirs)
 	}
 	if e.zpoolPath == "" {
-		e.Logger.Println("zpool command not found, ZFS metrics will not be available")
+		e.Logger.Printf("zpool command not found on PATH %q or in %v, ZFS metrics will not be available", os.Getenv("PATH"), zfsToolDirs)
 		return
 	}
 	e.Logger.Printf("Retrieved zpool path: %q, zfs path: %q", e.zpoolPath, e.zfsPath)
