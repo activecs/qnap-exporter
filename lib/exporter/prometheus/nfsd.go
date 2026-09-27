@@ -171,7 +171,7 @@ func nfsdMetrics(s nfsdStats, threadsFile string, ps nfsdPoolStats) []metric {
 	if ps.parsed {
 		metrics = append(metrics,
 			metric{name: "node_nfsd_packets_arrived_total", value: ps.packetsArrived, metricType: "counter", help: "Packets arrived at nfsd (all pools)"},
-			metric{name: "node_nfsd_sockets_enqueued_total", value: ps.socketsEnqueued, metricType: "counter", help: "Sockets queued because no nfsd thread was free (all pools)"},
+			metric{name: "node_nfsd_sockets_enqueued_total", value: ps.socketsEnqueued, metricType: "counter", help: "Sockets enqueued for nfsd (all pools); rate(enqueued) - rate(threads_woken) > 0 means requests waited for a thread"},
 			metric{name: "node_nfsd_threads_woken_total", value: ps.threadsWoken, metricType: "counter", help: "nfsd threads woken to serve requests (all pools)"},
 			metric{name: "node_nfsd_threads_timedout_total", value: ps.threadsTimedout, metricType: "counter", help: "nfsd threads that timed out idle (all pools)"},
 		)
