@@ -22,8 +22,10 @@ proc4ops 76 0 0 0 1769392 600861 370325 24013 0 547971 9501698 1276317 0 15890 4
 wdeleg_getattr 0
 `
 
+// Real pool_stats from the same NAS: on kernel 6.x sockets-enqueued ≈ threads-woken on the normal
+// path; only the difference (54 here) is requests that waited for a thread.
 const fixturePoolStats = `# pool packets-arrived sockets-enqueued threads-woken threads-timedout
-0 21646995 12 21646980 0
+0 22050308 41214046 41213992 0
 `
 
 func TestParseNfsdRPCFixture(t *testing.T) {
@@ -53,8 +55,9 @@ func TestNfsdMetricsFixture(t *testing.T) {
 	assert.Equal(t, 21646603.0, byKey["node_nfsd_rpc_calls_total{}"])
 	assert.Equal(t, 9501698.0, byKey[`node_nfsd_requests_total{proto="nfsv4",op="getattr"}`])
 	assert.Equal(t, 480934.0, byKey[`node_nfsd_requests_total{proto="nfsv4",op="readdir"}`])
-	assert.Equal(t, 12.0, byKey["node_nfsd_sockets_enqueued_total{}"])
-	assert.Equal(t, 21646980.0, byKey["node_nfsd_threads_woken_total{}"])
+	assert.Equal(t, 41214046.0, byKey["node_nfsd_sockets_enqueued_total{}"])
+	assert.Equal(t, 41213992.0, byKey["node_nfsd_threads_woken_total{}"])
+	assert.Equal(t, 22050308.0, byKey["node_nfsd_packets_arrived_total{}"])
 	_, hasZero := byKey[`node_nfsd_requests_total{proto="nfsv4",op="delegpurge"}`]
 	assert.False(t, hasZero, "zero-count ops are not emitted")
 	_, hasV3 := byKey[`node_nfsd_requests_total{proto="nfsv3",op="all"}`]

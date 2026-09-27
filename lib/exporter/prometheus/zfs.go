@@ -43,7 +43,15 @@ type zfsDataset struct {
 	refer      float64
 	quota      float64 // 0 when unset
 	mountpoint string
+	volume     string // QNAP share/volume name when derivable, else last mountpoint component
 }
+
+// qutsSnapshotDir is the child dataset QuTS hero creates per volume; its mountpoint reveals the
+// share name: zpool1/zfs18/RecentlySnapshot -> /share/ZFS18_DATA/shared/@Recently-Snapshot.
+const (
+	qutsSnapshotDataset = "RecentlySnapshot"
+	qutsSnapshotDir     = "@Recently-Snapshot"
+)
 
 type zfsState struct {
 	pools     []zpoolInfo
@@ -221,7 +229,35 @@ func parseZfsList(output string) ([]zfsDataset, error) {
 		d.quota, _ = strconv.ParseFloat(strings.TrimSpace(f[4]), 64)
 		datasets = append(datasets, d)
 	}
-	return datasets, nil
+	return annotateQutsVolumes(datasets), nil
+}
+
+// annotateQutsVolumes fills the volume label and drops QuTS hero's per-volume snapshot datasets.
+// For a dataset D mounted at M, a child D/RecentlySnapshot mounted at M/<share>/@Recently-Snapshot
+// names the share; everything else falls back to the last mountpoint component.
+func annotateQutsVolumes(all []zfsDataset) []zfsDataset {
+	shareOf := map[string]string{}
+	for _, d := range all {
+		if path.Base(d.name) != qutsSnapshotDataset || path.Base(d.mountpoint) != qutsSnapshotDir {
+			continue
+		}
+		parent := path.Dir(d.name)
+		shareDir := path.Dir(d.mountpoint) // M/<share>
+		shareOf[parent] = path.Base(shareDir)
+	}
+	out := make([]zfsDataset, 0, len(all))
+	for _, d := range all {
+		if path.Base(d.name) == qutsSnapshotDataset || strings.Contains(d.mountpoint, qutsSnapshotDir) {
+			continue
+		}
+		if share, ok := shareOf[d.name]; ok {
+			d.volume = share
+		} else {
+			d.volume = datasetVolume(d)
+		}
+		out = append(out, d)
+	}
+	return out
 }
 
 // datasetPool returns the pool component of a dataset name (zpool1/zfs3 -> zpool1).
@@ -349,7 +385,7 @@ func zpoolMetrics(p zpoolInfo) []metric {
 }
 
 func zfsDatasetMetrics(d zfsDataset) []metric {
-	attr := fmt.Sprintf("volume=%q,filesystem=\"zfs\",dataset=%q,pool=%q", datasetVolume(d), d.name, datasetPool(d.name))
+	attr := fmt.Sprintf("volume=%q,filesystem=\"zfs\",dataset=%q,pool=%q", d.volume, d.name, datasetPool(d.name))
 	size := d.used + d.avail
 	if d.quota > 0 && d.quota < size {
 		size = d.quota

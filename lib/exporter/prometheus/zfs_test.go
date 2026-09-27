@@ -165,6 +165,57 @@ func TestParseZfsList(t *testing.T) {
 	assert.Equal(t, 107374182400.0, pub[0].value, "quota caps size when smaller than used+avail")
 }
 
+// Captured on a TS-X73A running QuTS hero h5.2.9 (2026-09-27), whitespace as printed by zfs list -Hp.
+const fixtureZfsList = `zpool1	19748520141396	17984165946059	229344	0	/zpool1
+zpool1/zfs1	2147672032	1946497056	200986592	0	/share/ZFS1_DATA
+zpool1/zfs1107	38139448852	38139137588	172000	0	/zpool1/zfs1107
+zpool1/zfs18	19700650495136	16075121545248	13611692404704	0	/share/ZFS18_DATA
+zpool1/zfs18/RecentlySnapshot	196576	17984165946059	196576	0	/share/ZFS18_DATA/shared/@Recently-Snapshot
+zpool1/zfs19	30588832	107343921184	30261216	0	/share/ZFS19_DATA
+zpool1/zfs19/RecentlySnapshot	172000	17984165946059	172000	0	/share/ZFS19_DATA/Container/@Recently-Snapshot
+zpool1/zfs2	11837344	107362672672	11509728	0	/share/ZFS2_DATA
+zpool1/zfs2/RecentlySnapshot	172000	17984165946059	172000	0	/share/ZFS2_DATA/Public/@Recently-Snapshot
+zpool1/zfs20	868256	107373641760	540640	0	/share/ZFS20_DATA
+zpool1/zfs20/RecentlySnapshot	172000	17984165946059	172000	0	/share/ZFS20_DATA/homes/@Recently-Snapshot
+zpool1/zfs21	1664096	17984165946059	249824	0	/share/ZFS21_DATA
+zpool1/zfs21/RecentlySnapshot	200672	17984165946059	200672	0	/share/ZFS21_DATA/nextcloud/@Recently-Snapshot
+zpool1/zfs3	6422432	107368087584	6094816	0	/share/ZFS3_DATA
+zpool1/zfs3/RecentlySnapshot	172000	17984165946059	172000	0	/share/ZFS3_DATA/Multimedia/@Recently-Snapshot
+zpool1/zfs530	3474735040	17984165946059	3474579424	0	/share/ZFS530_DATA
+zpool256	1187840	401465344	147456	0	/zpool256
+zpool257	1355776	401297408	147456	0	/zpool257
+zpool257/zfs1108	147456	401297408	147456	0	/zpool257/zfs1108
+zpoolExt2	17932288	357877351	147456	0	/zpoolExt2
+zpoolExt2/zfsMain	147456	357877351	147456	0	/mnt/ext2
+zpoolExt2/zfsSync	16445440	357877351	16445440	0	/mnt/sync
+`
+
+func TestParseZfsListQutsHero(t *testing.T) {
+	ds, err := parseZfsList(fixtureZfsList)
+	require.NoError(t, err)
+	byName := map[string]zfsDataset{}
+	for _, d := range ds {
+		byName[d.name] = d
+		assert.NotContains(t, d.name, "RecentlySnapshot", "snapshot datasets are dropped")
+	}
+	assert.Len(t, ds, 22-6)
+	assert.Equal(t, "shared", byName["zpool1/zfs18"].volume)
+	assert.Equal(t, "Public", byName["zpool1/zfs2"].volume)
+	assert.Equal(t, "Multimedia", byName["zpool1/zfs3"].volume)
+	assert.Equal(t, "Container", byName["zpool1/zfs19"].volume)
+	assert.Equal(t, "homes", byName["zpool1/zfs20"].volume)
+	assert.Equal(t, "nextcloud", byName["zpool1/zfs21"].volume)
+	assert.Equal(t, "ZFS1_DATA", byName["zpool1/zfs1"].volume, "no snapshot child → mountpoint basename")
+	assert.Equal(t, "ext2", byName["zpoolExt2/zfsMain"].volume)
+	assert.Equal(t, 19700650495136.0, byName["zpool1/zfs18"].used)
+	assert.Equal(t, 16075121545248.0, byName["zpool1/zfs18"].avail)
+
+	m := zfsDatasetMetrics(byName["zpool1/zfs18"])
+	assert.Contains(t, m[0].attr, `volume="shared"`)
+	assert.Contains(t, m[0].attr, `dataset="zpool1/zfs18"`)
+	assert.Contains(t, m[0].attr, `pool="zpool1"`)
+}
+
 func TestParseZfsCount(t *testing.T) {
 	assert.Equal(t, 0.0, parseZfsCount("0"))
 	assert.Equal(t, 1200.0, parseZfsCount("1.2K"))
