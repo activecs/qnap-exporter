@@ -99,6 +99,7 @@ func (s *Status) WriteHTML(w io.Writer) error {
 			"UPS":           humanizeList(e.Ups),
 			"Devices":       humanizeList(e.Devices),
 			"Volumes":       humanizeList(e.Volumes),
+			"ZFS pools":     humanizeList(e.ZfsPools),
 			"Interfaces":    humanizeList(e.Interfaces),
 			"Enclosures":    humanizeList(e.Enclosures),
 			"dm-caches":     humanizeList(e.DmCaches),

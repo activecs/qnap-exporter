@@ -27,6 +27,7 @@ type Status struct {
 	Devices           []string
 	NvmeDevices       []string
 	Volumes           []string
+	ZfsPools          []string
 	Enclosures        []string
 	DmCaches          []string
 	DmCacheDevice     string

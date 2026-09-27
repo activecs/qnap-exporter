@@ -64,6 +64,10 @@ type promExporter struct {
 	dmCacheClients           []string
 	dmCacheDeviceMinorNumber string
 
+	zpoolPath string
+	zfsPath   string
+	zfs       zfsState
+
 	fns     map[string]fetchMetricFn
 	fetchMu sync.Mutex
 }
@@ -101,6 +105,9 @@ func NewExporter(config ExporterConfig, status *exporter.Status) exporter.Export
 		"NetworkStats":    e.getNetworkStatsMetrics,
 		"Ping":            e.getPingMetrics,
 		"NvmeSmart":       e.getNvmeSmartMetrics,
+		"Zfs":             e.getZfsMetrics,
+		"Mdstat":          getMdstatMetrics,
+		"Nfsd":            getNfsdMetrics,
 	}
 
 	if status != nil {
@@ -198,6 +205,7 @@ func (e *promExporter) readEnvironment() {
 	e.readDevices()
 	e.readNvmePath()
 	e.readDmCacheDevices()
+	e.readZfsPaths()
 
 	e.envExpiry = e.envExpiry.Add(envValidity)
 
@@ -345,6 +353,20 @@ func (e *promExporter) readNvmePath() {
 	}
 }
 
+func (e *promExporter) readZfsPaths() {
+	if e.zpoolPath == "" {
+		e.zpoolPath, _ = exec.LookPath("zpool")
+	}
+	if e.zfsPath == "" {
+		e.zfsPath, _ = exec.LookPath("zfs")
+	}
+	if e.zpoolPath == "" {
+		e.Logger.Println("zpool command not found, ZFS metrics will not be available")
+		return
+	}
+	e.Logger.Printf("Retrieved zpool path: %q, zfs path: %q", e.zpoolPath, e.zfsPath)
+}
+
 func (e *promExporter) readDmCacheDevices() {
 	e.dmCacheClients = []string{}
 	if e.kernelVersion < 5 {
@@ -380,6 +402,10 @@ func (e *promExporter) updateStatusEnvironment() {
 
 	e.status.Devices = e.devices
 	e.status.NvmeDevices = e.nvmeDevices
+	e.status.ZfsPools = e.status.ZfsPools[:0]
+	for _, p := range e.zfs.pools {
+		e.status.ZfsPools = append(e.status.ZfsPools, p.name)
+	}
 	e.status.Interfaces = e.ifaces
 	e.status.DmCaches = e.dmCacheClients
 	if e.dmCacheDeviceMinorNumber != "" {
