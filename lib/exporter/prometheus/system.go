@@ -19,14 +19,24 @@ func getUptimeMetrics() ([]metric, error) {
 		return nil, err
 	}
 
-	return []metric{
+	metrics := []metric{
 		{
 			name:       "node_time_seconds",
 			value:      float64(u),
 			help:       "System uptime measured in seconds",
 			metricType: "counter",
 		},
-	}, err
+	}
+	if bt, err := host.BootTime(); err == nil {
+		metrics = append(metrics, metric{
+			name:       "node_boot_time_seconds",
+			value:      float64(bt),
+			help:       "Node boot time, in unixtime",
+			metricType: "gauge",
+		})
+	}
+
+	return metrics, nil
 }
 
 func getLoadAvgMetrics() ([]metric, error) {
