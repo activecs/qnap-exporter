@@ -1,7 +1,9 @@
 package prometheus
 
 import (
+	"errors"
 	"fmt"
+	"os/exec"
 	"path"
 	"regexp"
 	"strconv"
@@ -57,6 +59,28 @@ type zfsState struct {
 	pools     []zpoolInfo
 	datasets  []zfsDataset
 	lastFetch time.Time
+
+	// index of the first command variant that worked (-1 = not yet known); vendor ZFS builds
+	// (QNAP QuTS hero) reject some options accepted by OpenZFS.
+	zpoolListVariant int
+	zfsListVariant   int
+}
+
+// zpoolListVariants are tried in order until one succeeds: parsable bytes with fragmentation,
+// without fragmentation, then human-readable sizes.
+var zpoolListVariants = [][]string{
+	{"list", "-Hp", "-o", "name,size,alloc,free,frag,health"},
+	{"list", "-Hp", "-o", "name,size,alloc,free,health"},
+	{"list", "-H", "-o", "name,size,alloc,free,frag,health"},
+	{"list", "-H", "-o", "name,size,alloc,free,health"},
+}
+
+// zfsListVariants: with and without quota, parsable and human-readable.
+var zfsListVariants = [][]string{
+	{"list", "-Hp", "-o", "name,used,avail,refer,quota,mountpoint", "-t", "filesystem"},
+	{"list", "-Hp", "-o", "name,used,avail,refer,mountpoint", "-t", "filesystem"},
+	{"list", "-H", "-o", "name,used,avail,refer,quota,mountpoint", "-t", "filesystem"},
+	{"list", "-H", "-o", "name,used,avail,refer,mountpoint", "-t", "filesystem"},
 }
 
 var (
@@ -81,22 +105,25 @@ func parseZpoolList(output string) ([]zpoolInfo, error) {
 			continue
 		}
 		f := strings.Fields(line)
-		if len(f) < 6 {
-			return nil, fmt.Errorf("parse zpool list line %q: expected 6 fields, got %d", line, len(f))
+		// name size alloc free [frag] health
+		if len(f) != 5 && len(f) != 6 {
+			return nil, fmt.Errorf("parse zpool list line %q: expected 5 or 6 fields, got %d", line, len(f))
 		}
-		p := zpoolInfo{name: f[0], health: f[5], frag: -1}
+		p := zpoolInfo{name: f[0], health: f[len(f)-1], frag: -1}
 		var err error
-		if p.size, err = strconv.ParseFloat(f[1], 64); err != nil {
+		if p.size, err = parseZfsSize(f[1]); err != nil {
 			return nil, fmt.Errorf("parse zpool %s size %q: %w", p.name, f[1], err)
 		}
-		if p.alloc, err = strconv.ParseFloat(f[2], 64); err != nil {
+		if p.alloc, err = parseZfsSize(f[2]); err != nil {
 			return nil, fmt.Errorf("parse zpool %s alloc %q: %w", p.name, f[2], err)
 		}
-		if p.free, err = strconv.ParseFloat(f[3], 64); err != nil {
+		if p.free, err = parseZfsSize(f[3]); err != nil {
 			return nil, fmt.Errorf("parse zpool %s free %q: %w", p.name, f[3], err)
 		}
-		if frag, err := strconv.ParseFloat(strings.TrimSuffix(f[4], "%"), 64); err == nil {
-			p.frag = frag / 100
+		if len(f) == 6 {
+			if frag, err := strconv.ParseFloat(strings.TrimSuffix(f[4], "%"), 64); err == nil {
+				p.frag = frag / 100
+			}
 		}
 		pools = append(pools, p)
 	}
@@ -178,6 +205,36 @@ func parseZpoolConfigErrors(block string, pool string) (readErr, writeErr, cksum
 	return readErr, writeErr, cksumErr
 }
 
+// parseZfsSize parses a zfs/zpool size: exact bytes (-p) or human-readable (12.5T, 800G, 1.2M)
+// with 1024-based units; "-" or "none" yield 0.
+func parseZfsSize(s string) (float64, error) {
+	s = strings.TrimSpace(s)
+	if s == "-" || s == "none" || s == "" {
+		return 0, nil
+	}
+	mult := 1.0
+	switch s[len(s)-1] {
+	case 'K':
+		mult = 1 << 10
+	case 'M':
+		mult = 1 << 20
+	case 'G':
+		mult = 1 << 30
+	case 'T':
+		mult = 1 << 40
+	case 'P':
+		mult = 1 << 50
+	}
+	if mult != 1 {
+		s = s[:len(s)-1]
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, err
+	}
+	return v * mult, nil
+}
+
 // parseZfsCount parses zpool status counters, which may be abbreviated (1.2K) without -p.
 func parseZfsCount(s string) float64 {
 	mult := 1.0
@@ -206,27 +263,27 @@ func parseZfsList(output string) ([]zfsDataset, error) {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		f := strings.Split(line, "\t")
-		if len(f) < 6 {
-			f = strings.Fields(line)
+		f := strings.Fields(line)
+		// name used avail refer [quota] mountpoint
+		if len(f) != 5 && len(f) != 6 {
+			return nil, fmt.Errorf("parse zfs list line %q: expected 5 or 6 fields, got %d", line, len(f))
 		}
-		if len(f) < 6 {
-			return nil, fmt.Errorf("parse zfs list line %q: expected 6 fields, got %d", line, len(f))
-		}
-		mp := strings.TrimSpace(f[5])
+		mp := f[len(f)-1]
 		if mp == "none" || mp == "legacy" || mp == "-" || !strings.HasPrefix(mp, "/") {
 			continue
 		}
-		d := zfsDataset{name: strings.TrimSpace(f[0]), mountpoint: mp}
+		d := zfsDataset{name: f[0], mountpoint: mp}
 		var err error
-		if d.used, err = strconv.ParseFloat(strings.TrimSpace(f[1]), 64); err != nil {
+		if d.used, err = parseZfsSize(f[1]); err != nil {
 			return nil, fmt.Errorf("parse zfs %s used %q: %w", d.name, f[1], err)
 		}
-		if d.avail, err = strconv.ParseFloat(strings.TrimSpace(f[2]), 64); err != nil {
+		if d.avail, err = parseZfsSize(f[2]); err != nil {
 			return nil, fmt.Errorf("parse zfs %s avail %q: %w", d.name, f[2], err)
 		}
-		d.refer, _ = strconv.ParseFloat(strings.TrimSpace(f[3]), 64)
-		d.quota, _ = strconv.ParseFloat(strings.TrimSpace(f[4]), 64)
+		d.refer, _ = parseZfsSize(f[3])
+		if len(f) == 6 {
+			d.quota, _ = parseZfsSize(f[4])
+		}
 		datasets = append(datasets, d)
 	}
 	return annotateQutsVolumes(datasets), nil
@@ -281,7 +338,7 @@ func (e *promExporter) refreshZfs() error {
 	}
 	e.zfs.lastFetch = time.Now()
 
-	listOut, err := utils.ExecCommand(e.zpoolPath, "list", "-Hp", "-o", "name,size,alloc,free,frag,health")
+	listOut, err := e.runZfsVariant(e.zpoolPath, zpoolListVariants, &e.zfs.zpoolListVariant)
 	if err != nil {
 		return fmt.Errorf("zpool list: %w", err)
 	}
@@ -312,7 +369,7 @@ func (e *promExporter) refreshZfs() error {
 	e.zfs.pools = pools
 
 	if e.zfsPath != "" {
-		zfsOut, err := utils.ExecCommand(e.zfsPath, "list", "-Hp", "-o", "name,used,avail,refer,quota,mountpoint", "-t", "filesystem")
+		zfsOut, err := e.runZfsVariant(e.zfsPath, zfsListVariants, &e.zfs.zfsListVariant)
 		if err != nil {
 			return fmt.Errorf("zfs list: %w", err)
 		}
@@ -321,6 +378,40 @@ func (e *promExporter) refreshZfs() error {
 		}
 	}
 	return nil
+}
+
+// runZfsVariant runs the remembered working variant, or tries them in order the first time and
+// remembers the first that succeeds. Failures carry the command's stderr.
+func (e *promExporter) runZfsVariant(bin string, variants [][]string, chosen *int) (string, error) {
+	if *chosen > 0 && *chosen <= len(variants) {
+		return execWithStderr(bin, variants[*chosen-1]...)
+	}
+	var lastErr error
+	for i, args := range variants {
+		out, err := execWithStderr(bin, args...)
+		if err == nil {
+			*chosen = i + 1
+			if i > 0 {
+				e.Logger.Printf("%s %v works (variant %d); earlier variants failed: %v", bin, args, i+1, lastErr)
+			}
+			return out, nil
+		}
+		lastErr = err
+	}
+	return "", lastErr
+}
+
+// execWithStderr is utils.ExecCommand with the process' stderr folded into the error.
+func execWithStderr(bin string, args ...string) (string, error) {
+	out, err := exec.Command(bin, args...).Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+			return "", fmt.Errorf("%s %s: %w: %s", path.Base(bin), strings.Join(args, " "), err, strings.TrimSpace(string(ee.Stderr)))
+		}
+		return "", fmt.Errorf("%s %s: %w", path.Base(bin), strings.Join(args, " "), err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 // getZfsMetrics emits pool health/capacity/error/scrub metrics and dataset capacity metrics.
