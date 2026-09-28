@@ -216,6 +216,45 @@ func TestParseZfsListQutsHero(t *testing.T) {
 	assert.Contains(t, m[0].attr, `pool="zpool1"`)
 }
 
+func TestParseZpoolListVariants(t *testing.T) {
+	// 5 fields (no frag), human-readable sizes as printed without -p
+	pools, err := parseZpoolList("zpool1\t27.0T\t13.0T\t14.0T\tONLINE\nzpool256\t236G\t1.13M\t236G\tONLINE\n")
+	require.NoError(t, err)
+	require.Len(t, pools, 2)
+	assert.Equal(t, 27.0*(1<<40), pools[0].size)
+	assert.Equal(t, -1.0, pools[0].frag)
+	assert.Equal(t, "ONLINE", pools[0].health)
+	assert.Equal(t, 1.13*(1<<20), pools[1].alloc)
+
+	// 6 fields with percent-suffixed fragmentation
+	pools, err = parseZpoolList("tank\t100\t40\t60\t7%\tDEGRADED")
+	require.NoError(t, err)
+	assert.InDelta(t, 0.07, pools[0].frag, 1e-9)
+	assert.Equal(t, "DEGRADED", pools[0].health)
+
+	_, err = parseZpoolList("tank\t100\t40")
+	assert.Error(t, err)
+}
+
+func TestParseZfsListWithoutQuota(t *testing.T) {
+	ds, err := parseZfsList("zpool1/zfs18\t17.9T\t14.6T\t12.4T\t/share/ZFS18_DATA\nzpool1/zfs18/RecentlySnapshot\t192K\t16.4T\t192K\t/share/ZFS18_DATA/shared/@Recently-Snapshot\n")
+	require.NoError(t, err)
+	require.Len(t, ds, 1)
+	assert.Equal(t, "shared", ds[0].volume)
+	assert.Equal(t, 17.9*(1<<40), ds[0].used)
+	assert.Equal(t, 0.0, ds[0].quota)
+}
+
+func TestParseZfsSize(t *testing.T) {
+	for in, want := range map[string]float64{"0": 0, "-": 0, "1024": 1024, "1K": 1024, "1.5M": 1.5 * (1 << 20), "2G": 2 * (1 << 30), "27.0T": 27 * (1 << 40)} {
+		got, err := parseZfsSize(in)
+		require.NoError(t, err, in)
+		assert.Equal(t, want, got, in)
+	}
+	_, err := parseZfsSize("abc")
+	assert.Error(t, err)
+}
+
 func TestParseZfsCount(t *testing.T) {
 	assert.Equal(t, 0.0, parseZfsCount("0"))
 	assert.Equal(t, 1200.0, parseZfsCount("1.2K"))
