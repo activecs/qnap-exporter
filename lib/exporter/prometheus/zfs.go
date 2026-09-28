@@ -67,20 +67,22 @@ type zfsState struct {
 }
 
 // zpoolListVariants are tried in order until one succeeds: parsable bytes with fragmentation,
-// without fragmentation, then human-readable sizes.
+// without fragmentation, then human-readable sizes. Full property names only: QNAP's QuTS hero
+// ZFS build knows neither the `alloc` alias nor `frag`/`fragmentation` (it has allocated, size,
+// free, health, capacity, usedbysnapshot, ...), while OpenZFS accepts the full names as well.
 var zpoolListVariants = [][]string{
-	{"list", "-Hp", "-o", "name,size,alloc,free,frag,health"},
-	{"list", "-Hp", "-o", "name,size,alloc,free,health"},
-	{"list", "-H", "-o", "name,size,alloc,free,frag,health"},
-	{"list", "-H", "-o", "name,size,alloc,free,health"},
+	{"list", "-Hp", "-o", "name,size,allocated,free,fragmentation,health"},
+	{"list", "-Hp", "-o", "name,size,allocated,free,health"},
+	{"list", "-H", "-o", "name,size,allocated,free,health"},
 }
 
-// zfsListVariants: with and without quota, parsable and human-readable.
+// zfsListVariants: with and without quota, parsable and human-readable. The alias form
+// (avail, refer) is confirmed on QuTS hero; full names are the OpenZFS-safe fallback.
 var zfsListVariants = [][]string{
 	{"list", "-Hp", "-o", "name,used,avail,refer,quota,mountpoint", "-t", "filesystem"},
-	{"list", "-Hp", "-o", "name,used,avail,refer,mountpoint", "-t", "filesystem"},
-	{"list", "-H", "-o", "name,used,avail,refer,quota,mountpoint", "-t", "filesystem"},
-	{"list", "-H", "-o", "name,used,avail,refer,mountpoint", "-t", "filesystem"},
+	{"list", "-Hp", "-o", "name,used,available,referenced,quota,mountpoint", "-t", "filesystem"},
+	{"list", "-Hp", "-o", "name,used,available,referenced,mountpoint", "-t", "filesystem"},
+	{"list", "-H", "-o", "name,used,available,referenced,mountpoint", "-t", "filesystem"},
 }
 
 var (
